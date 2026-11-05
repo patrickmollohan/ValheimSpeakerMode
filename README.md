@@ -3,7 +3,7 @@ A BepInEx mod that adds a speaker mode dropdown to Valheim's audio settings page
 
 ## Usage
 - Dropdown injected into the vanilla audio settings page.
-- Modes: Stereo, Quad, 5.1 Surround, and 7.1 Surround.
+- Modes: Mono, Stereo, Quad, 5.0 Surround, 5.1 Surround, 7.1 Surround, and Prologic.
 - Immediate preview when the dropdown changes.
 - "OK" commits the selection to the BepInEx config; "Back" restores the last committed mode.
 - Startup applies the saved mode.
@@ -56,7 +56,10 @@ Valheim/BepInEx/config/com.patrickmollohan.valheimspeakermode.cfg
 
 | Value | Mode |
 |---:|---|
+| 1 | Mono |
 | 2 | Stereo |
-| 4 | Quad |
-| 6 | 5.1 |
-| 7 | 7.1 |
+| 3 | Quad |
+| 4 | 5.0 Surround |
+| 5 | 5.1 Surround |
+| 6 | 7.1 Surround |
+| 7 | Prologic |

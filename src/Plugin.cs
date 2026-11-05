@@ -12,7 +12,7 @@ namespace ValheimSpeakerMode {
     public sealed class Plugin : BaseUnityPlugin {
         public const string PluginGuid = "com.patrickmollohan.valheimspeakermode";
         public const string PluginName = "Valheim Speaker Mode";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.0.1";
 
         internal static Plugin Instance { get; private set; }
         internal static ManualLogSource Log { get; private set; }
@@ -47,7 +47,7 @@ namespace ValheimSpeakerMode {
             Instance = this;
             Log = Logger;
 
-            SavedSpeakerMode = Config.Bind("Audio", "SpeakerMode", (int)AudioSpeakerMode.Stereo, "Unity speaker mode: 2=Stereo, 4=Quad, 6=5.1, 7=7.1.");
+            SavedSpeakerMode = Config.Bind("Audio", "SpeakerMode", (int)AudioSpeakerMode.Stereo, "Unity speaker mode.");
             _committedMode = SavedSpeakerMode.Value;
             _previewMode = _committedMode;
 
@@ -190,10 +190,13 @@ namespace ValheimSpeakerMode {
 
         internal static string ModeName(int mode) {
             switch ((AudioSpeakerMode)mode) {
+				case AudioSpeakerMode.Mono: return "Mono";
                 case AudioSpeakerMode.Stereo: return "Stereo";
                 case AudioSpeakerMode.Quad: return "Quad";
+				case AudioSpeakerMode.Surround: return "5.0 Surround";
                 case AudioSpeakerMode.Mode5point1: return "5.1 Surround";
                 case AudioSpeakerMode.Mode7point1: return "7.1 Surround";
+				case AudioSpeakerMode.Prologic: return "Prologic";
                 default: return "Unknown (" + mode + ")";
             }
         }

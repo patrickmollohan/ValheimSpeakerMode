@@ -50,10 +50,13 @@ namespace ValheimSpeakerMode {
 
     internal sealed class AudioModeDropdown : MonoBehaviour {
         private static readonly int[] ModeValues = {
+			(int)AudioSpeakerMode.Mono,
             (int)AudioSpeakerMode.Stereo,
             (int)AudioSpeakerMode.Quad,
+			(int)AudioSpeakerMode.Surround,
             (int)AudioSpeakerMode.Mode5point1,
-            (int)AudioSpeakerMode.Mode7point1
+            (int)AudioSpeakerMode.Mode7point1,
+			(int)AudioSpeakerMode.Prologic
         };
 
         private TMP_Dropdown _dropdown;
@@ -177,10 +180,13 @@ namespace ValheimSpeakerMode {
 
             _dropdown.ClearOptions();
             _dropdown.AddOptions(new List<string> {
+				"Mono",
                 "Stereo",
                 "Quad",
+				"5.0 Surround",
                 "5.1 Surround",
-                "7.1 Surround"
+                "7.1 Surround",
+				"Prologic"
             });
             _dropdown.onValueChanged.AddListener(OnModeSelected);
 
