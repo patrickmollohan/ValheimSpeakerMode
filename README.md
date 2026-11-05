@@ -43,7 +43,7 @@ Copy that DLL into:
 Valheim/BepInEx/plugins/ValheimSpeakerMode/
 ```
 
-Then launch Valheim through BepInEx.
+Then launch Valheim with BepInEx.
 
 ## Config
 After the first launch, the plugin creates:
