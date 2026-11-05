@@ -1,0 +1,7 @@
+# Build output
+bin/
+obj/
+
+# Local game and BepInEx assemblies
+lib/
+*.dll

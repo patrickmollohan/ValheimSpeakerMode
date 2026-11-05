@@ -1,0 +1,139 @@
+name: Build Valheim Speaker Mode
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Download and initialize SteamCMD
+        shell: pwsh
+        run: |
+          $temp = "$env:RUNNER_TEMP\steamcmd"
+          New-Item -ItemType Directory -Force -Path $temp | Out-Null
+
+          $zip = "$temp\steamcmd.zip"
+
+          Invoke-WebRequest `
+            -Uri "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip" `
+            -OutFile $zip
+
+          Expand-Archive -Path $zip -DestinationPath $temp -Force
+
+          $steamcmd = "$temp\steamcmd.exe"
+
+          if (!(Test-Path $steamcmd)) {
+            throw "SteamCMD executable was not found."
+          }
+
+          & $steamcmd +quit
+
+          Start-Sleep -Seconds 5
+
+          & $steamcmd +quit
+
+          Start-Sleep -Seconds 3
+
+          if (!(Test-Path $steamcmd)) {
+            throw "SteamCMD executable is missing after initialization."
+          }
+
+          Write-Host "SteamCMD initialization completed."
+
+      - name: Install Valheim Dedicated Server
+        shell: pwsh
+        run: |
+          $temp = "$env:RUNNER_TEMP\steamcmd"
+          $steamcmd = "$temp\steamcmd.exe"
+          $serverDir = "$env:RUNNER_TEMP\valheim-server"
+
+          New-Item -ItemType Directory -Force -Path $serverDir | Out-Null
+
+          $installed = $false
+
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Valheim installation attempt $attempt of 3"
+
+            & $steamcmd `
+              +force_install_dir "$serverDir" `
+              +login anonymous `
+              +app_info_update 1 `
+              +app_update 896660 validate `
+              +quit
+
+            $managedDir = "$serverDir\valheim_server_Data\Managed"
+
+            if (Test-Path "$managedDir\assembly_valheim.dll") {
+              $installed = $true
+              break
+            }
+
+            Write-Warning "Valheim installation attempt $attempt failed."
+            Start-Sleep -Seconds 15
+          }
+
+          if (!$installed) {
+            throw "Valheim Dedicated Server installation failed after 3 attempts."
+          }
+
+          Write-Host "Valheim Dedicated Server installed successfully."
+
+      - name: Download BepInEx
+        shell: pwsh
+        run: |
+          $temp = "$env:RUNNER_TEMP\bepinex"
+          New-Item -ItemType Directory -Force -Path $temp | Out-Null
+
+          $zip = "$temp\bepinex.zip"
+
+          Invoke-WebRequest `
+            -Uri "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.6/BepInEx_win_x64_5.4.23.6.zip" `
+            -OutFile $zip
+
+          Expand-Archive -Path $zip -DestinationPath $temp -Force
+
+          if (!(Test-Path "$temp\BepInEx\core\BepInEx.dll")) {
+            throw "BepInEx assemblies were not found."
+          }
+
+          Write-Host "BepInEx downloaded successfully."
+
+      - name: Build mod
+        shell: pwsh
+        run: |
+          $serverDir = "$env:RUNNER_TEMP\valheim-server"
+          $bepinexDir = "$env:RUNNER_TEMP\bepinex\BepInEx\core"
+
+          dotnet build .\ValheimSpeakerMode.csproj `
+            --configuration Release `
+            -p:ManagedDir="$serverDir\valheim_server_Data\Managed" `
+            -p:BepInExCoreDir="$bepinexDir" `
+            -p:AppendTargetFrameworkToOutputPath=false
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Mod compilation failed."
+          }
+
+      - name: Upload compiled mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: ValheimSpeakerMode
+          path: bin/Release/ValheimSpeakerMode.dll
+          if-no-files-found: error
+          retention-days: 14
