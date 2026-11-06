@@ -17,7 +17,7 @@ namespace ValheimSpeakerMode {
             try {
                 AudioModeDropdown.Attach(__instance, ___m_continousMusic);
             } catch (Exception ex) {
-                Plugin.Log.LogError("Could not inject speaker mode dropdown: " + ex);
+                Plugin.Log.LogError("Could not inject audio settings dropdowns: " + ex);
             }
         }
     }
@@ -25,11 +25,11 @@ namespace ValheimSpeakerMode {
     [HarmonyPatch(typeof(GameAudioSettings), "OnTabOpen")]
     internal static class AudioSettingsTabOpenPatch {
         private static void Postfix(GameAudioSettings __instance, Button backButton, Button okButton) {
-            AudioModeDropdown dropdown = __instance.GetComponent<AudioModeDropdown>();
+            AudioModeDropdown dropdowns = __instance.GetComponent<AudioModeDropdown>();
 
-            if (dropdown != null) {
-                dropdown.RefreshSelection();
-                dropdown.UpdateNavigation(backButton, okButton);
+            if (dropdowns != null) {
+                dropdowns.RefreshSelections();
+                dropdowns.UpdateNavigation(backButton, okButton);
             }
         }
     }
@@ -37,30 +37,56 @@ namespace ValheimSpeakerMode {
     [HarmonyPatch(typeof(GameAudioSettings), "OnOkAsync")]
     internal static class AudioSettingsOkPatch {
         private static void Prefix() {
-            if (Plugin.Instance != null) Plugin.Instance.CommitSpeakerMode();
+            if (Plugin.Instance != null) Plugin.Instance.CommitAudioSettings();
         }
     }
 
     [HarmonyPatch(typeof(GameAudioSettings), "OnBack")]
     internal static class AudioSettingsBackPatch {
         private static void Postfix() {
-            if (Plugin.Instance != null) Plugin.Instance.RevertSpeakerMode();
+            if (Plugin.Instance != null) Plugin.Instance.RevertAudioSettings();
         }
     }
 
     internal sealed class AudioModeDropdown : MonoBehaviour {
+
         private static readonly int[] ModeValues = {
-			(int)AudioSpeakerMode.Mono,
+            (int)AudioSpeakerMode.Mono,
             (int)AudioSpeakerMode.Stereo,
             (int)AudioSpeakerMode.Quad,
-			(int)AudioSpeakerMode.Surround,
+            (int)AudioSpeakerMode.Surround,
             (int)AudioSpeakerMode.Mode5point1,
             (int)AudioSpeakerMode.Mode7point1,
-			(int)AudioSpeakerMode.Prologic
+            (int)AudioSpeakerMode.Prologic
         };
 
-        private TMP_Dropdown _dropdown;
+        private static readonly int[] StandardSampleRates = {
+            11025,
+            22050,
+            44100,
+            48000,
+            88200,
+            96000
+        };
+
+        private static readonly int[] StandardDspBufferSizes = {
+            64,
+            128,
+            256,
+            512,
+            1024,
+            2048,
+            4096
+        };
+
+        private TMP_Dropdown _speakerModeDropdown;
+        private TMP_Dropdown _sampleRateDropdown;
+        private TMP_Dropdown _dspBufferSizeDropdown;
+
         private Toggle _lastVanillaControl;
+
+        private List<int> _sampleRateValues;
+        private List<int> _dspBufferSizeValues;
 
         internal static void Attach(GameAudioSettings audio, Toggle lastVanillaControl) {
             if (audio == null || lastVanillaControl == null) return;
@@ -95,7 +121,6 @@ namespace ValheimSpeakerMode {
             if (resolutionField == null) return null;
 
             UnityEngine.Object[] panels = Resources.FindObjectsOfTypeAll(graphicsType);
-
             foreach (UnityEngine.Object candidate in panels) {
                 Component panel = candidate as Component;
                 if (panel == null || !panel.gameObject.scene.IsValid()) continue;
@@ -116,8 +141,115 @@ namespace ValheimSpeakerMode {
         }
 
         private void Build(Transform layoutParent, Transform rowTemplate, TMP_Text labelSource, Component dropdownTemplate) {
+            _sampleRateValues = new List<int>(StandardSampleRates);
+
+            AudioConfiguration initialConfiguration = UnityEngine.AudioSettings.GetConfiguration();
+
+            int initialSampleRate = Plugin.Instance != null ? Plugin.Instance.PreviewSampleRate : initialConfiguration.sampleRate;
+            if (initialSampleRate > 0 && !_sampleRateValues.Contains(initialSampleRate)) {
+                _sampleRateValues.Add(initialSampleRate);
+                _sampleRateValues.Sort();
+            }
+
+            _dspBufferSizeValues = new List<int>(StandardDspBufferSizes);
+
+            int initialDspBufferSize = Plugin.Instance != null ? Plugin.Instance.PreviewDspBufferSize : initialConfiguration.dspBufferSize;
+            if (initialDspBufferSize > 0 && !_dspBufferSizeValues.Contains(initialDspBufferSize)) {
+                _dspBufferSizeValues.Add(initialDspBufferSize);
+                _dspBufferSizeValues.Sort();
+            }
+
+            _speakerModeDropdown = CreateDropdownRow(layoutParent, rowTemplate, dropdownTemplate, "SpeakerMode", "Speaker mode",
+                new List<string> {
+                    "Mono",
+                    "Stereo",
+                    "Quad",
+                    "5.0 Surround",
+                    "5.1 Surround",
+                    "7.1 Surround",
+                    "Prologic"
+                });
+
+            List<string> sampleRateOptions = _sampleRateValues.Select(rate => rate.ToString("N0") + " Hz").ToList();
+            _sampleRateDropdown = CreateDropdownRow(layoutParent, rowTemplate, dropdownTemplate, "SampleRate", "Sample rate", sampleRateOptions);
+
+            List<string> dspBufferOptions = _dspBufferSizeValues.Select(size => size.ToString()).ToList();
+            _dspBufferSizeDropdown = AddSecondDropdown(_sampleRateDropdown, dropdownTemplate, "DspBufferSize", "DSP buffer size", dspBufferOptions);
+
+            _speakerModeDropdown.onValueChanged.AddListener(OnSpeakerModeSelected);
+            _sampleRateDropdown.onValueChanged.AddListener(OnSampleRateSelected);
+            _dspBufferSizeDropdown.onValueChanged.AddListener(OnDspBufferSizeSelected);
+
+            RefreshSelections();
+
+            _speakerModeDropdown.transform.parent.SetSiblingIndex(_lastVanillaControl.transform.GetSiblingIndex());
+            _sampleRateDropdown.transform.parent.SetSiblingIndex(_lastVanillaControl.transform.GetSiblingIndex());
+
+            _speakerModeDropdown.transform.parent.gameObject.SetActive(true);
+            _sampleRateDropdown.transform.parent.gameObject.SetActive(true);
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(layoutParent.GetComponent<RectTransform>());
+        }
+
+        private const float SecondLabelRightEdge = 365f;
+        private const float SecondDropdownX = 380f;
+        private const float SecondLabelWidth = 175f;
+
+        private static TMP_Dropdown CreateDropdownControl(Transform row, Component dropdownTemplate, string objectName, List<string> options, float xPosition) {
+            GameObject dropdownObject = Instantiate(dropdownTemplate.gameObject, row, false);
+            dropdownObject.name = objectName;
+            dropdownObject.SetActive(true);
+
+            TMP_Dropdown dropdown = dropdownObject.GetComponent<TMP_Dropdown>();
+            if (dropdown == null) throw new InvalidOperationException("Cloned native dropdown has no TMP_Dropdown.");
+
+            RectTransform dropdownRect = dropdownObject.GetComponent<RectTransform>();
+            dropdownRect.anchorMin = new Vector2(0f, 0.5f);
+            dropdownRect.anchorMax = new Vector2(0f, 0.5f);
+            dropdownRect.pivot = new Vector2(0f, 0.5f);
+            dropdownRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 180f);
+            dropdownRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 46f);
+            dropdownRect.anchoredPosition = new Vector2(xPosition, 0f);
+            dropdownRect.localScale = Vector3.one;
+
+            LayoutElement dropdownLayout = dropdownObject.GetComponent<LayoutElement>();
+            if (dropdownLayout == null) dropdownLayout = dropdownObject.AddComponent<LayoutElement>();
+            dropdownLayout.ignoreLayout = true;
+
+            dropdown.ClearOptions();
+            dropdown.AddOptions(options);
+
+            return dropdown;
+        }
+
+        private static TMP_Dropdown AddSecondDropdown(TMP_Dropdown firstDropdown, Component dropdownTemplate, string rowName, string labelText, List<string> options) {
+            Transform row = firstDropdown.transform.parent;
+
+            Transform firstLabel = row.Find("Label");
+            if (firstLabel == null) throw new InvalidOperationException("Row has no Label to clone for second dropdown.");
+
+            GameObject labelObject = Instantiate(firstLabel.gameObject, row, false);
+            labelObject.name = rowName + "Label";
+
+            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+            labelRect.anchorMin = new Vector2(0f, 0f);
+            labelRect.anchorMax = new Vector2(0f, 1f);
+            labelRect.pivot = new Vector2(1f, 0.5f);
+            labelRect.sizeDelta = new Vector2(SecondLabelWidth, 0f);
+            labelRect.anchoredPosition = new Vector2(SecondLabelRightEdge, 0f);
+            labelRect.localScale = Vector3.one;
+
+            TMP_Text label = labelObject.GetComponent<TMP_Text>();
+            label.text = labelText;
+            label.alignment = TextAlignmentOptions.MidlineRight;
+            label.raycastTarget = false;
+
+            return CreateDropdownControl(row, dropdownTemplate, rowName + "Dropdown", options, SecondDropdownX);
+        }
+
+        private TMP_Dropdown CreateDropdownRow(Transform layoutParent, Transform rowTemplate, Component dropdownTemplate, string rowName, string labelText, List<string> options) {
             GameObject row = Instantiate(rowTemplate.gameObject, layoutParent, false);
-            row.name = "SpeakerMode";
+            row.name = rowName;
 
             Transform background = row.transform.Find("Background");
             Transform fillArea = row.transform.Find("Fill Area");
@@ -146,7 +278,7 @@ namespace ValheimSpeakerMode {
 
             TMP_Text label = labelTransform.GetComponent<TMP_Text>();
             if (label == null) throw new InvalidOperationException("Cloned slider label has no TMP_Text.");
-            label.text = "Speaker mode";
+            label.text = labelText;
             label.raycastTarget = false;
 
             LayoutElement rowLayout = row.GetComponent<LayoutElement>();
@@ -158,87 +290,90 @@ namespace ValheimSpeakerMode {
             RectTransform rowRect = row.GetComponent<RectTransform>();
             rowRect.localScale = Vector3.one;
 
-            GameObject dropdownObject = Instantiate(dropdownTemplate.gameObject, row.transform, false);
-            dropdownObject.name = "SpeakerModeDropdown";
-            dropdownObject.SetActive(true);
+            TMP_Dropdown dropdown = CreateDropdownControl(row.transform, dropdownTemplate, rowName + "Dropdown", options, 0f);
 
-            _dropdown = dropdownObject.GetComponent<TMP_Dropdown>();
-            if (_dropdown == null) throw new InvalidOperationException("Cloned native dropdown has no TMP_Dropdown.");
+            row.SetActive(false);
 
-            RectTransform dropdownRect = dropdownObject.GetComponent<RectTransform>();
-            dropdownRect.anchorMin = new Vector2(0f, 0.5f);
-            dropdownRect.anchorMax = new Vector2(0f, 0.5f);
-            dropdownRect.pivot = new Vector2(0f, 0.5f);
-            dropdownRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 180f);
-            dropdownRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, 46f);
-            dropdownRect.anchoredPosition = Vector2.zero;
-            dropdownRect.localScale = Vector3.one;
-
-            LayoutElement dropdownLayout = dropdownObject.GetComponent<LayoutElement>();
-            if (dropdownLayout == null) dropdownLayout = dropdownObject.AddComponent<LayoutElement>();
-            dropdownLayout.ignoreLayout = true;
-
-            _dropdown.ClearOptions();
-            _dropdown.AddOptions(new List<string> {
-				"Mono",
-                "Stereo",
-                "Quad",
-				"5.0 Surround",
-                "5.1 Surround",
-                "7.1 Surround",
-				"Prologic"
-            });
-            _dropdown.onValueChanged.AddListener(OnModeSelected);
-
-            RefreshSelection();
-
-            row.transform.SetSiblingIndex(_lastVanillaControl.transform.GetSiblingIndex());
-            row.SetActive(true);
-
-            LayoutRebuilder.ForceRebuildLayoutImmediate(layoutParent.GetComponent<RectTransform>());
+            return dropdown;
         }
 
-        private void OnModeSelected(int index) {
+        private void OnSpeakerModeSelected(int index) {
             if (index < 0 || index >= ModeValues.Length || Plugin.Instance == null) return;
             Plugin.Instance.PreviewSpeakerMode(ModeValues[index]);
         }
 
-        internal void RefreshSelection() {
-            if (_dropdown == null || Plugin.Instance == null) return;
-            _dropdown.SetValueWithoutNotify(IndexForMode(Plugin.Instance.PreviewMode));
-            _dropdown.RefreshShownValue();
+        private void OnSampleRateSelected(int index) {
+            if (_sampleRateValues == null || index < 0 || index >= _sampleRateValues.Count || Plugin.Instance == null) return;
+            Plugin.Instance.PreviewSampleRateSetting(_sampleRateValues[index]);
+        }
+
+        private void OnDspBufferSizeSelected(int index) {
+            if (_dspBufferSizeValues == null || index < 0 || index >= _dspBufferSizeValues.Count || Plugin.Instance == null) return;
+            Plugin.Instance.PreviewDspBufferSizeSetting(_dspBufferSizeValues[index]);
+        }
+
+        internal void RefreshSelections() {
+            if (Plugin.Instance == null) return;
+
+            if (_speakerModeDropdown != null) {
+                _speakerModeDropdown.SetValueWithoutNotify(IndexForMode(Plugin.Instance.PreviewMode));
+                _speakerModeDropdown.RefreshShownValue();
+            }
+
+            if (_sampleRateDropdown != null) {
+                _sampleRateDropdown.SetValueWithoutNotify(IndexForSampleRate(Plugin.Instance.PreviewSampleRate));
+                _sampleRateDropdown.RefreshShownValue();
+            }
+
+            if (_dspBufferSizeDropdown != null) {
+                _dspBufferSizeDropdown.SetValueWithoutNotify(IndexForDspBufferSize(Plugin.Instance.PreviewDspBufferSize));
+                _dspBufferSizeDropdown.RefreshShownValue();
+            }
         }
 
         internal void UpdateNavigation(Button backButton, Button okButton) {
-            if (_dropdown == null || _lastVanillaControl == null) return;
+            if (_speakerModeDropdown == null || _sampleRateDropdown == null || _dspBufferSizeDropdown == null || _lastVanillaControl == null) return;
 
-            Navigation toggleNavigation = _lastVanillaControl.navigation;
-            toggleNavigation.mode = Navigation.Mode.Explicit;
-            toggleNavigation.selectOnDown = _dropdown;
+            Navigation vanillaNavigation = _lastVanillaControl.navigation;
+            vanillaNavigation.mode = Navigation.Mode.Explicit;
+            vanillaNavigation.selectOnDown = _speakerModeDropdown;
+            _lastVanillaControl.navigation = vanillaNavigation;
 
-            _lastVanillaControl.navigation = toggleNavigation;
+            Navigation speakerNavigation = _speakerModeDropdown.navigation;
+            speakerNavigation.mode = Navigation.Mode.Explicit;
+            speakerNavigation.selectOnUp = _lastVanillaControl;
+            speakerNavigation.selectOnDown = _sampleRateDropdown;
+            _speakerModeDropdown.navigation = speakerNavigation;
 
-            Navigation dropdownNavigation = _dropdown.navigation;
-            dropdownNavigation.mode = Navigation.Mode.Explicit;
-            dropdownNavigation.selectOnUp = _lastVanillaControl;
+            Navigation sampleRateNavigation = _sampleRateDropdown.navigation;
+            sampleRateNavigation.mode = Navigation.Mode.Explicit;
+            sampleRateNavigation.selectOnUp = _speakerModeDropdown;
+            sampleRateNavigation.selectOnRight = _dspBufferSizeDropdown;
+            if (backButton != null) sampleRateNavigation.selectOnDown = backButton;
+            _sampleRateDropdown.navigation = sampleRateNavigation;
 
-            if (backButton != null) dropdownNavigation.selectOnDown = backButton;
-
-            _dropdown.navigation = dropdownNavigation;
+            Navigation dspBufferNavigation = _dspBufferSizeDropdown.navigation;
+            dspBufferNavigation.mode = Navigation.Mode.Explicit;
+            dspBufferNavigation.selectOnUp = _speakerModeDropdown;
+            dspBufferNavigation.selectOnLeft = _sampleRateDropdown;
+            if (okButton != null) {
+                dspBufferNavigation.selectOnDown = okButton;
+            } else if (backButton != null) {
+                dspBufferNavigation.selectOnDown = backButton;
+            }
+            _dspBufferSizeDropdown.navigation = dspBufferNavigation;
 
             if (backButton != null) {
                 Navigation navigation = backButton.navigation;
                 navigation.mode = Navigation.Mode.Explicit;
-                navigation.selectOnUp = _dropdown;
-
+                navigation.selectOnUp = _sampleRateDropdown;
                 backButton.navigation = navigation;
             }
 
             if (okButton != null) {
                 Navigation navigation = okButton.navigation;
                 navigation.mode = Navigation.Mode.Explicit;
-                navigation.selectOnUp = _dropdown;
-
+                navigation.selectOnUp = _dspBufferSizeDropdown;
                 okButton.navigation = navigation;
             }
         }
@@ -248,6 +383,18 @@ namespace ValheimSpeakerMode {
                 if (ModeValues[i] == mode) return i;
             }
             return 0;
+        }
+
+        private int IndexForSampleRate(int sampleRate) {
+            if (_sampleRateValues == null) return 0;
+            int index = _sampleRateValues.IndexOf(sampleRate);
+            return index >= 0 ? index : 0;
+        }
+
+        private int IndexForDspBufferSize(int bufferSize) {
+            if (_dspBufferSizeValues == null) return 0;
+            int index = _dspBufferSizeValues.IndexOf(bufferSize);
+            return index >= 0 ? index : 0;
         }
     }
 }

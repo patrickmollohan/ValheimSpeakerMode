@@ -1,12 +1,13 @@
 # Valheim Speaker Mode
-A BepInEx mod that adds a speaker mode dropdown to Valheim's audio settings page. It currently only changes Unity's global speaker mode; it does **not** modify AudioSources, spatialBlend, 3D positioning, or sound assets.
+A BepInEx mod that adds speaker mode, sample rate, and DSP buffer size dropdowns to Valheim's audio settings page. It changes Unity's global audio output configuration; it does **not** modify AudioSources, spatialBlend, 3D positioning, or sound assets.
 
 ## Usage
 - Dropdown injected into the vanilla audio settings page.
-- Modes: Mono, Stereo, Quad, 5.0 Surround, 5.1 Surround, 7.1 Surround, and Prologic.
-- Immediate preview when the dropdown changes.
-- "OK" commits the selection to the BepInEx config; "Back" restores the last committed mode.
-- Startup applies the saved mode.
+- Speaker modes: Mono, Stereo, Quad, 5.0 Surround, 5.1 Surround, 7.1 Surround, and Prologic.
+- Sample rates: 11025, 22050, 44100, 48000, 88200, and 96000 Hz.
+- DSP buffer size: 64, 128, 256, 512, 1024, 2048, and 4096.
+- All settings preview immediately when changed.
+- "OK" commits selections to the BepInEx config; "Back" restores last committed settings.
 
 ## Requirements
 - Valheim
@@ -63,3 +64,26 @@ Valheim/BepInEx/config/com.patrickmollohan.valheimspeakermode.cfg
 | 5 | 5.1 Surround |
 | 6 | 7.1 Surround |
 | 7 | Prologic |
+
+**SampleRate** values:
+
+| Value | Mode |
+|---:|---|
+| 11025 | 11.025kHz |
+| 22050 | 22.05kHz |
+| 44100 | 44.1kHz |
+| 48000 | 48kHz |
+| 88200 | 88.2kHz |
+| 96000 | 96kHz |
+
+**DspBufferSize** values:
+
+| Value |
+|---:|
+| 64 |
+| 128 |
+| 256 |
+| 512 |
+| 1024 |
+| 2048 |
+| 4096 |

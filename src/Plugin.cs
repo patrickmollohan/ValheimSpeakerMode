@@ -12,15 +12,21 @@ namespace ValheimSpeakerMode {
     public sealed class Plugin : BaseUnityPlugin {
         public const string PluginGuid = "com.patrickmollohan.valheimspeakermode";
         public const string PluginName = "Valheim Speaker Mode";
-        public const string PluginVersion = "1.0.1";
+        public const string PluginVersion = "1.1.0";
 
         internal static Plugin Instance { get; private set; }
         internal static ManualLogSource Log { get; private set; }
         internal ConfigEntry<int> SavedSpeakerMode { get; private set; }
+        internal ConfigEntry<int> SavedSampleRate { get; private set; }
+        internal ConfigEntry<int> SavedDspBufferSize { get; private set; }
 
         private Harmony _harmony;
         private int _committedMode;
         private int _previewMode;
+        private int _committedSampleRate;
+        private int _previewSampleRate;
+        private int _committedDspBufferSize;
+        private int _previewDspBufferSize;
 
         private MusicSnapshot _musicSnapshot;
         private Coroutine _musicRestoreCoroutine;
@@ -47,16 +53,28 @@ namespace ValheimSpeakerMode {
             Instance = this;
             Log = Logger;
 
-            SavedSpeakerMode = Config.Bind("Audio", "SpeakerMode", (int)AudioSpeakerMode.Stereo, "Unity speaker mode.");
+            AudioConfiguration initialConfiguration = AudioSettings.GetConfiguration();
+            Logger.LogInfo("Initial Unity audio configuration: sampleRate=" + initialConfiguration.sampleRate + " Hz, speakerMode=" + initialConfiguration.speakerMode + ", dspBufferSize=" + initialConfiguration.dspBufferSize + ".");
+
+            SavedSpeakerMode = Config.Bind("Audio", "SpeakerMode", (int)initialConfiguration.speakerMode, "Unity speaker mode.");
+            SavedSampleRate = Config.Bind("Audio", "SampleRate", initialConfiguration.sampleRate, "Unity audio output sample rate in Hz.");
+            SavedDspBufferSize = Config.Bind("Audio", "DspBufferSize", initialConfiguration.dspBufferSize, "Unity DSP buffer size in samples.");
+
             _committedMode = SavedSpeakerMode.Value;
             _previewMode = _committedMode;
+
+            _committedSampleRate = SavedSampleRate.Value > 0 ? SavedSampleRate.Value : initialConfiguration.sampleRate;
+            _previewSampleRate = _committedSampleRate;
+
+            _committedDspBufferSize = SavedDspBufferSize.Value > 0 ? SavedDspBufferSize.Value : initialConfiguration.dspBufferSize;
+            _previewDspBufferSize = _committedDspBufferSize;
 
             _harmony = new Harmony(PluginGuid);
 
             try {
-                ApplySpeakerMode(_committedMode, "startup");
+                ApplyAudioSettings(_committedMode, _committedSampleRate, _committedDspBufferSize, "startup");
             } catch (Exception ex) {
-                Logger.LogError("Could not apply the saved speaker mode: " + ex);
+                Logger.LogError("Could not apply the saved audio settings: " + ex);
             }
 
             _harmony.PatchAll(typeof(Plugin).Assembly);
@@ -67,48 +85,87 @@ namespace ValheimSpeakerMode {
             get { return _previewMode; }
         }
 
+        internal int PreviewSampleRate {
+            get { return _previewSampleRate; }
+        }
+
+        internal int PreviewDspBufferSize {
+            get { return _previewDspBufferSize; }
+        }
+
         internal void PreviewSpeakerMode(int requestedMode) {
             _previewMode = requestedMode;
-            ApplySpeakerMode(requestedMode, "preview");
+            ApplyAudioSettings(_previewMode, _previewSampleRate, _previewDspBufferSize, "speaker mode preview");
         }
 
-        internal void CommitSpeakerMode() {
+        internal void PreviewSampleRateSetting(int requestedSampleRate) {
+            _previewSampleRate = requestedSampleRate;
+            ApplyAudioSettings(_previewMode, _previewSampleRate, _previewDspBufferSize, "sample rate preview");
+        }
+
+        internal void PreviewDspBufferSizeSetting(int requestedBufferSize) {
+            _previewDspBufferSize = requestedBufferSize;
+            ApplyAudioSettings(_previewMode, _previewSampleRate, _previewDspBufferSize, "DSP buffer size preview");
+        }
+
+        internal void CommitAudioSettings() {
             _committedMode = _previewMode;
+            _committedSampleRate = _previewSampleRate;
+            _committedDspBufferSize = _previewDspBufferSize;
+
             SavedSpeakerMode.Value = _committedMode;
+            SavedSampleRate.Value = _committedSampleRate;
+            SavedDspBufferSize.Value = _committedDspBufferSize;
+
             Config.Save();
-
-            Logger.LogInfo("Saved speaker mode: " + ModeName(_committedMode));
+            Logger.LogInfo("Saved audio settings: speakerMode=" + ModeName(_committedMode) + ", sampleRate=" + _committedSampleRate + " Hz, dspBufferSize=" + _committedDspBufferSize + ".");
         }
 
-        internal void RevertSpeakerMode() {
+        internal void RevertAudioSettings() {
             _previewMode = _committedMode;
-            ApplySpeakerMode(_committedMode, "revert");
+            _previewSampleRate = _committedSampleRate;
+            _previewDspBufferSize = _committedDspBufferSize;
+
+            ApplyAudioSettings(_committedMode, _committedSampleRate, _committedDspBufferSize, "revert");
         }
 
-        private void ApplySpeakerMode(int requestedMode, string reason) {
+        private void ApplyAudioSettings(int requestedMode, int requestedSampleRate, int requestedDspBufferSize, string reason) {
             if (!Enum.IsDefined(typeof(AudioSpeakerMode), requestedMode)) {
                 Logger.LogWarning("Ignoring invalid AudioSpeakerMode value: " + requestedMode);
                 return;
             }
 
-            AudioSpeakerMode requested = (AudioSpeakerMode)requestedMode;
-            AudioConfiguration configuration = AudioSettings.GetConfiguration();
+            if (requestedSampleRate <= 0) {
+                Logger.LogWarning("Ignoring invalid audio sample rate: " + requestedSampleRate);
+                return;
+            }
 
-            if (configuration.speakerMode == requested) {
-                Logger.LogInfo("Speaker mode already " + requested + " (" + reason + ").");
+            if (requestedDspBufferSize <= 0) {
+                Logger.LogWarning("Ignoring invalid DSP buffer size: " + requestedDspBufferSize);
+                return;
+            }
+
+            AudioSpeakerMode requestedSpeakerMode = (AudioSpeakerMode)requestedMode;
+
+            AudioConfiguration configuration = AudioSettings.GetConfiguration();
+            if (configuration.speakerMode == requestedSpeakerMode && configuration.sampleRate == requestedSampleRate && configuration.dspBufferSize == requestedDspBufferSize) {
+                Logger.LogInfo("Audio settings already match the request (" + reason + "): " + requestedSpeakerMode + ", " + requestedSampleRate + " Hz, DSP buffer " + requestedDspBufferSize + ".");
                 return;
             }
 
             CaptureMusicState();
 
-            configuration.speakerMode = requested;
+            configuration.speakerMode = requestedSpeakerMode;
+            configuration.sampleRate = requestedSampleRate;
+            configuration.dspBufferSize = requestedDspBufferSize;
 
             bool resetSucceeded = AudioSettings.Reset(configuration);
-            AudioSpeakerMode actual = AudioSettings.GetConfiguration().speakerMode;
 
-            Logger.LogInfo("Speaker mode " + reason + ": requested " + requested + ", actual " + actual + ", Reset returned " + resetSucceeded + ".");
+            AudioConfiguration actual = AudioSettings.GetConfiguration();
 
-            if (!resetSucceeded || actual != requested) Logger.LogWarning("The audio driver did not accept " + requested + ". Check the operating system's speaker layout and audio device capabilities.");
+            Logger.LogInfo("Audio settings " + reason + ": requested speakerMode=" + requestedSpeakerMode + ", sampleRate=" + requestedSampleRate + " Hz, dspBufferSize=" + requestedDspBufferSize + "; actual speakerMode=" + actual.speakerMode + ", sampleRate=" + actual.sampleRate + " Hz, dspBufferSize=" + actual.dspBufferSize + "; Reset returned " + resetSucceeded + ".");
+
+            if (!resetSucceeded || actual.speakerMode != requestedSpeakerMode || actual.sampleRate != requestedSampleRate || actual.dspBufferSize != requestedDspBufferSize) Logger.LogWarning("The audio device did not accept all requested settings. Unity may have selected the closest supported configuration.");
 
             RestoreMusicStateAfterReset();
         }
@@ -123,7 +180,6 @@ namespace ValheimSpeakerMode {
                 AudioSource source = MusicManSourceField?.GetValue(musicMan) as AudioSource;
                 object currentMusic = MusicManCurrentField?.GetValue(musicMan);
                 object queuedMusic = MusicManQueuedField?.GetValue(musicMan);
-
                 object namedMusic = queuedMusic ?? currentMusic;
                 if (namedMusic == null) return;
 
@@ -148,7 +204,6 @@ namespace ValheimSpeakerMode {
 
         private void RestoreMusicStateAfterReset() {
             if (_musicSnapshot == null || !_musicSnapshot.WasPlaying) return;
-
             if (_musicRestoreCoroutine != null) StopCoroutine(_musicRestoreCoroutine);
             _musicRestoreCoroutine = StartCoroutine(RestoreMusicAfterDelay());
         }
@@ -190,13 +245,13 @@ namespace ValheimSpeakerMode {
 
         internal static string ModeName(int mode) {
             switch ((AudioSpeakerMode)mode) {
-				case AudioSpeakerMode.Mono: return "Mono";
+                case AudioSpeakerMode.Mono: return "Mono";
                 case AudioSpeakerMode.Stereo: return "Stereo";
                 case AudioSpeakerMode.Quad: return "Quad";
-				case AudioSpeakerMode.Surround: return "5.0 Surround";
+                case AudioSpeakerMode.Surround: return "5.0 Surround";
                 case AudioSpeakerMode.Mode5point1: return "5.1 Surround";
                 case AudioSpeakerMode.Mode7point1: return "7.1 Surround";
-				case AudioSpeakerMode.Prologic: return "Prologic";
+                case AudioSpeakerMode.Prologic: return "Prologic";
                 default: return "Unknown (" + mode + ")";
             }
         }
